@@ -19,6 +19,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import openai
+from openai import OpenAI, DefaultHttpxClient
+
 import queue
 import threading
 import traceback
@@ -27,6 +29,8 @@ import sys
 from epc.server import ThreadingEPCServer
 from functools import wraps
 from utils import (get_command_result, get_emacs_var, get_emacs_vars, init_epc_client, eval_in_emacs, logger, close_epc_client, message_emacs, string_to_base64, decode_text)
+
+
 
 def catch_exception(func):
     @wraps(func)
@@ -61,7 +65,21 @@ class MindWave:
         if api_key is not None:
             openai.api_key = api_key
 
-        openai.api_base, openai.api_type, openai.api_version = get_emacs_vars(["mind-wave-api-base", "mind-wave-api-type", "mind-wave-api-version"])
+        api_base, api_type, api_version = get_emacs_vars(["mind-wave-api-base", "mind-wave-api-type", "mind-wave-api-version"])
+
+        api_proxy = get_emacs_var("mind-wave-api-proxy")
+
+        if api_proxy:
+            http_client = DefaultHttpxClient(proxy=api_proxy)
+        else:
+            http_client = DefaultHttpxClient()
+
+        self.client = OpenAI(
+            base_url = api_base,
+            api_key=api_key,
+            http_client=http_client
+        )
+
 
         self.server.register_instance(self)  # register instance functions let elisp side call
 
@@ -95,13 +113,17 @@ class MindWave:
             logger.error(traceback.format_exc())
 
     def chat_get_api_key(self):
+        mind_wave_api_key = get_emacs_var("mind-wave-api-key")
         mind_wave_chat_api_key_file_path = os.path.expanduser(get_emacs_var("mind-wave-api-key-path"))
+
         key = None
         if os.path.exists(mind_wave_chat_api_key_file_path):
             with open(mind_wave_chat_api_key_file_path, "r") as f:
                 api_key = f.read().strip()
                 if api_key != "":
                     key = api_key
+        elif mind_wave_api_key:
+            key = mind_wave_api_key
         else:
             key = os.environ.get("OPENAI_API_KEY")
 
@@ -111,15 +133,10 @@ class MindWave:
         return key
 
     @catch_exception
-    def send_completion_request(self, messages, model="gpt-3.5-turbo"):
-        if openai.api_type == 'azure':
-            response = openai.ChatCompletion.create(
-                engine = model,
-                messages = messages)
-        else:
-            response = openai.ChatCompletion.create(
-                model = model,
-                messages = messages)
+    def send_completion_request(self, messages, model="llama3.2:latest"):
+        response = self.client.chat.completions.create(
+            model = model,
+            messages = messages)
 
         result = ''
         for choice in response.choices:
@@ -128,22 +145,18 @@ class MindWave:
         return (result, response)
 
     @catch_exception
-    def send_stream_request(self, messages, callback, model="gpt-3.5-turbo"):
-        if openai.api_type == 'azure':
-            response = openai.ChatCompletion.create(
-                engine = model,
-                messages = messages,
-                temperature=0,
-                stream=True)
-        else:
-            response = openai.ChatCompletion.create(
-                model = model,
-                messages = messages,
-                temperature=0,
-                stream=True)
+    def send_stream_request(self, messages, callback, model="llama3.2:latest"):
+        response = self.client.chat.completions.create(
+            model = model,
+            messages = messages,
+            temperature=0,
+            stream=True)
+
+        callback('start', '')
 
         for chunk in response:
             (result_type, result_content) = self.get_chunk_result(chunk)
+            print(result_type, result_content)
             callback(result_type, result_content)
 
     @threaded
@@ -351,18 +364,11 @@ class MindWave:
                     {"role": "user", "content": f"{prompt}： \n{text}"}]
 
         try:
-            if openai.api_type == 'azure':
-                response = openai.ChatCompletion.create(
-                    engine = "gpt-3.5-turbo",
-                    messages = messages,
-                    temperature=0,
-                    stream=True)
-            else:
-                response = openai.ChatCompletion.create(
-                    model = "gpt-3.5-turbo",
-                    messages = messages,
-                    temperature=0,
-                    stream=True)
+            response = self.client.chat.completions.create(
+                engine = "gpt-3.5-turbo",
+                messages = messages,
+                temperature=0,
+                stream=True)
 
             for chunk in response:
                 (result_type, result_content) = self.get_chunk_result(chunk)
@@ -375,12 +381,13 @@ class MindWave:
 
     def get_chunk_result(self, chunk):
         delta = chunk.choices[0].delta
+        print(delta)
         if not delta:
             return ("end", "")
-        elif "role" in delta:
-            return ("start", "")
-        elif "content" in delta:
-            return ("content", string_to_base64(delta["content"]))
+        elif delta.content:
+            return ("content", string_to_base64(delta.content))
+        # elif delta.role:
+        #     return ("start", "")
 
     def cleanup(self):
         """Do some cleanup before exit python process."""
