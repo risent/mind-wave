@@ -93,10 +93,21 @@
   :type 'boolean
   :group 'mind-wave)
 
+(defcustom mind-wave-api-key "OLLAMA"
+  "OpenAI API key, not used for ollama"
+  :type 'string
+  :group 'mind-wave)
+
 (defcustom mind-wave-api-key-path (expand-file-name (concat user-emacs-directory (file-name-as-directory "mind-wave") "chatgpt_api_key.txt"))
   "The path to store OpenAI API Key."
   :type 'string
   :group 'mind-wave)
+
+(defcustom mind-wave-api-proxy ""
+  "OpenAI API Proxy"
+  :type 'string
+  :group 'mind-wave)
+
 
 (defcustom mind-wave-api-base "https://api.openai.com/v1"
   "OpenAI API base url"
@@ -143,7 +154,7 @@
   :type 'string
   :group 'mind-wave)
 
-(defcustom mind-wave-async-text-model "gpt-3.5-turbo"
+(defcustom mind-wave-async-text-model "llama3.2:latest"
   "Default model for async_text API."
   :type 'string
   :group 'mind-wave)
